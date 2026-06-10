@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+storage/
+!storage/.gitkeep
+node_modules/
+.next/
+out/
+dist/
+*.log
+.DS_Store
