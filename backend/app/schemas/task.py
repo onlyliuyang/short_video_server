@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -26,6 +27,12 @@ class CreateTaskRequest(BaseModel):
     session_id: str | None = Field(None, max_length=64)
     bgm_enabled: bool = False
 
+    generation_mode: Literal["image", "video"] | None = None
+    llm_provider: str | None = None
+    tts_provider: str | None = None
+    segment_provider: str | None = None
+    segment_duration_sec: int | None = Field(None, ge=1, le=60)
+
 
 class SegmentResponse(BaseModel):
     id: UUID
@@ -36,6 +43,7 @@ class SegmentResponse(BaseModel):
     visual_description: str | None = None
     camera_movement: str | None = None
     video_url: str | None = None
+    image_url: str | None = None
     error_message: str | None = None
 
     model_config = {"from_attributes": True}

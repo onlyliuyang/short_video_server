@@ -1,0 +1,8 @@
+用户方案：{{ prompt }}
+片段数量：{{ segment_count }}，每段 {{ segment_duration_sec }} 秒
+【硬性约束】用户指定的地点、场景、主体（如动物园、小猴子）不得更改或替换；所有片段必须发生在同一用户描述的场景内。
+{% if theme %}主题：{{ theme }}
+{% endif %}{% if style %}风格：{{ style }}
+{% endif %}{% if audience %}受众：{{ audience }}
+{% endif %}{% if script_direction %}脚本方向：{{ script_direction }}
+{% endif %}

@@ -9,6 +9,7 @@ from typing import Any, Callable
 import httpx
 
 from app.core.config import settings
+from app.services.minimax_errors import MiniMaxAPIError, raise_for_base_resp
 from app.utils.progress import video_limiter
 
 logger = logging.getLogger(__name__)
@@ -92,8 +93,7 @@ class MiniMaxVideoService:
                 resp.raise_for_status()
                 data = resp.json()
                 base_resp = data.get("base_resp", {})
-                if base_resp.get("status_code", 0) != 0:
-                    raise RuntimeError(f"MiniMax video API error: {base_resp}")
+                raise_for_base_resp(base_resp)
                 task_id = data.get("task_id") or data.get("taskId")
                 if not task_id:
                     raise RuntimeError(f"MiniMax create response missing task_id: {_safe_json(data)}")
@@ -135,8 +135,7 @@ class MiniMaxVideoService:
                 resp.raise_for_status()
                 data = resp.json()
                 base_resp = data.get("base_resp", {})
-                if base_resp.get("status_code", 0) != 0:
-                    raise RuntimeError(f"MiniMax query error: {base_resp}")
+                raise_for_base_resp(base_resp)
 
                 status = data.get("status", "")
                 if on_poll:

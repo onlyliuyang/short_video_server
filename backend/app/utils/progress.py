@@ -106,3 +106,13 @@ class VideoConcurrencyLimiter:
 
 
 video_limiter = VideoConcurrencyLimiter()
+
+
+class ImageConcurrencyLimiter(VideoConcurrencyLimiter):
+    ACTIVE_PREFIX = "semaphore:minimax:image:active:"
+
+    def __init__(self, max_concurrent: int | None = None) -> None:
+        super().__init__(max_concurrent or settings.image_concurrency)
+
+
+image_limiter = ImageConcurrencyLimiter()

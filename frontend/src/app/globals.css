@@ -54,6 +54,53 @@ body {
     0 8px 24px rgba(0, 0, 0, 0.06);
 }
 
+.panel-card {
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+.prompt-quote {
+  position: relative;
+  padding-left: 1.25rem;
+  border-left: 3px solid transparent;
+  border-image: linear-gradient(180deg, var(--gradient-start), var(--gradient-end)) 1;
+}
+
+.history-card {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.history-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--gradient-start), var(--gradient-end));
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.history-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.12);
+}
+.history-card:hover::before {
+  opacity: 1;
+}
+
+.page-fixed-720 {
+  width: 720px;
+  max-width: calc(100vw - 2rem);
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .gradient-text {
   background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
   -webkit-background-clip: text;

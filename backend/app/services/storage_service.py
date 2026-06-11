@@ -21,6 +21,11 @@ class StorageService:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
+    def segment_image_path(self, task_id: str | uuid.UUID, index: int) -> Path:
+        path = self.task_dir(task_id) / "segments" / f"seg_{index:02d}.jpg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
     def segment_frame_path(self, task_id: str | uuid.UUID, index: int, frame: str = "last") -> Path:
         frames_dir = self.task_dir(task_id) / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)

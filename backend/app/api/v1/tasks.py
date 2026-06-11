@@ -17,7 +17,10 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 @router.post("", response_model=TaskResponse, status_code=201)
 async def create_video_task(req: CreateTaskRequest, db: AsyncSession = Depends(get_db)):
-    task = await create_task(db, req)
+    try:
+        task = await create_task(db, req)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     task = await get_task(db, task.id)
     return build_task_response(task)
 

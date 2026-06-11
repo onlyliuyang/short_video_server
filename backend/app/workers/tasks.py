@@ -7,9 +7,10 @@ from app.core.config import settings
 from app.core.sync_database import SyncSessionLocal
 from app.models import FinalOutput, SegmentStatus, StoryboardSegment, TaskEvent, TaskStatus, VideoTask
 from app.services.ffmpeg_service import ffmpeg_service
-from app.services.llm_service import llm_service
-from app.services.minimax_tts import tts_service
 from app.services.storage_service import storage_service
+from app.providers.base import StoryboardRequest
+from app.providers.registry import get_llm_provider, get_tts_provider
+from app.providers.task_config import resolve_task_providers
 from app.utils.logging_config import setup_logging
 from app.utils.progress import acquire_task_lock, publish_progress, release_task_lock
 from app.workers.celery_app import celery_app
@@ -64,6 +65,20 @@ def _ensure_storyboard(db, task: VideoTask, script_data: dict) -> None:
     db.commit()
 
 
+def _segment_label(task: VideoTask) -> str:
+    resolved = resolve_task_providers(task.input_config, task.segment_duration_sec)
+    return "分镜图片" if resolved.is_image_mode else "视频片段"
+
+
+def _segment_stage(task: VideoTask) -> str:
+    resolved = resolve_task_providers(task.input_config, task.segment_duration_sec)
+    return "segment_image" if resolved.is_image_mode else "segment_video"
+
+
+def _generate_segment(db, task_id: str, segment_index: int, task: VideoTask) -> None:
+    generate_single_segment(db, task_id, segment_index)
+
+
 def _truncate(text: str, max_len: int = 480) -> str:
     text = text.replace("\n", " ").strip()
     if len(text) <= max_len:
@@ -77,6 +92,7 @@ def _synthesize_timeline_voiceover(
     segment_duration: int,
     total_segments: int,
     voice_path,
+    tts_provider_id: str,
 ) -> None:
     """按分段时间轴生成分段 TTS 并混合，避免整段旁白过短导致成片被裁切。"""
     from pathlib import Path
@@ -86,11 +102,13 @@ def _synthesize_timeline_voiceover(
     transition_sec = settings.segment_transition_sec
     tracks: list[tuple[Path, float]] = []
 
+    tts = get_tts_provider(tts_provider_id)
+
     for i, seg in enumerate(script_data["segments"]):
         part_path = tts_dir / f"seg_{i + 1}.mp3"
         narration = seg.get("narration", "").strip()
         if narration and (not part_path.exists() or part_path.stat().st_size == 0):
-            tts_service.synthesize(narration, part_path)
+            tts.synthesize(narration, part_path)
         if part_path.exists() and part_path.stat().st_size > 0:
             start = ffmpeg_service.segment_start_sec(i, segment_duration, transition_sec)
             tracks.append((part_path, start))
@@ -121,6 +139,8 @@ def _compose_and_finish(
     concat_path = storage_service.task_dir(task_id) / "concat.mp4"
     final_path = storage_service.final_video_path(task_id)
 
+    resolved = resolve_task_providers(task.input_config, task.segment_duration_sec)
+
     if not voice_path.exists():
         _update_task(
             db, tid,
@@ -131,6 +151,7 @@ def _compose_and_finish(
         publish_progress(task_id, TaskStatus.VOICEOVER_GENERATING.value, "voiceover", 75, "正在生成配音")
         _synthesize_timeline_voiceover(
             task_id, script_data, task.segment_duration_sec, task.total_segments, voice_path,
+            resolved.tts_provider,
         )
     else:
         expected_voice = ffmpeg_service.expected_video_duration(
@@ -144,6 +165,7 @@ def _compose_and_finish(
             )
             _synthesize_timeline_voiceover(
                 task_id, script_data, task.segment_duration_sec, task.total_segments, voice_path,
+                resolved.tts_provider,
             )
         else:
             logger.info("Skip TTS, voiceover exists: %s (%.2fs)", voice_path, actual_voice)
@@ -248,9 +270,9 @@ def run_pipeline(self, task_id: str, resume: bool = False) -> None:
                 db, tid,
                 status=TaskStatus.SEGMENT_GENERATING.value,
                 error_message=None,
-                progress_message="正在恢复视频生成",
+                progress_message="正在恢复生成",
             )
-            publish_progress(task_id, TaskStatus.SEGMENT_GENERATING.value, "segment_video", task.progress, "正在恢复视频生成")
+            publish_progress(task_id, TaskStatus.SEGMENT_GENERATING.value, "segment_video", task.progress, "正在恢复生成")
         else:
             _update_task(
                 db, tid,
@@ -263,7 +285,9 @@ def run_pipeline(self, task_id: str, resume: bool = False) -> None:
             _log_event(db, tid, "script", "正在生成脚本")
 
             cfg = task.input_config
-            script_data = llm_service.generate_script_and_storyboard(
+            resolved = resolve_task_providers(cfg, task.segment_duration_sec)
+            llm = get_llm_provider(resolved.llm_provider)
+            script_data = llm.generate_storyboard(StoryboardRequest(
                 prompt=cfg.get("prompt", ""),
                 theme=cfg.get("theme"),
                 style=cfg.get("style"),
@@ -271,7 +295,9 @@ def run_pipeline(self, task_id: str, resume: bool = False) -> None:
                 script_direction=cfg.get("script_direction"),
                 segment_count=task.total_segments,
                 segment_duration_sec=task.segment_duration_sec,
-            )
+                generation_mode=resolved.generation_mode,
+                prompt_profile=resolved.prompt_profile,
+            ))
             for seg in script_data.get("segments", []):
                 logger.info(
                     "[Storyboard] seg=%s shot=%s camera=%s scene_prompt=%s",
@@ -297,25 +323,28 @@ def run_pipeline(self, task_id: str, resume: bool = False) -> None:
         if start_segment > task.total_segments:
             logger.info("All segments ready, continue to TTS/compose task=%s", task_id)
         else:
+            label = _segment_label(task)
             _update_task(
                 db, tid,
                 status=TaskStatus.SEGMENT_GENERATING.value,
-                progress_message=f"正在生成第 {start_segment} 个视频片段",
+                progress_message=f"正在生成第 {start_segment} 个{label}",
             )
 
         for i in range(start_segment, task.total_segments + 1):
             progress = 15 + int((i / task.total_segments) * 55)
+            label = _segment_label(task)
+            msg = f"正在生成第 {i}/{task.total_segments} 个{label}"
             publish_progress(
                 task_id,
                 TaskStatus.SEGMENT_GENERATING.value,
-                "segment_video",
+                _segment_stage(task),
                 progress,
-                f"正在生成第 {i}/{task.total_segments} 个视频片段",
+                msg,
                 current_segment=i,
                 total_segments=task.total_segments,
             )
-            _update_task(db, tid, progress=progress, progress_message=f"正在生成第 {i}/{task.total_segments} 个视频片段")
-            generate_single_segment(db, task_id, i)
+            _update_task(db, tid, progress=progress, progress_message=msg)
+            _generate_segment(db, task_id, i, task)
 
         _compose_and_finish(db, tid, task_id, task, script_data)
 

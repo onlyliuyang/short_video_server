@@ -89,6 +89,78 @@ class FFmpegService:
         ]
         self._run(cmd)
 
+    @staticmethod
+    def _output_size_for_aspect(aspect_ratio: str) -> tuple[int, int]:
+        mapping = {
+            "16:9": (1280, 720),
+            "9:16": (720, 1280),
+            "1:1": (1024, 1024),
+            "4:3": (1152, 864),
+            "3:2": (1248, 832),
+            "2:3": (832, 1248),
+            "3:4": (864, 1152),
+            "21:9": (1344, 576),
+        }
+        return mapping.get(aspect_ratio, (1280, 720))
+
+    @staticmethod
+    def _motion_to_zoompan(motion_hint: str, camera: str, frames: int, w: int, h: int) -> str:
+        text = f"{motion_hint} {camera}".lower()
+        base = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+        if any(k in text for k in ("pan left", "pan_left", "左移", "left")):
+            return (
+                f"{base},zoompan=z='1.05':d={frames}:"
+                f"x='(iw-iw/zoom)*on/{frames}':y='(ih-ih/zoom)/2':s={w}x{h}"
+            )
+        if any(k in text for k in ("pan right", "pan_right", "右移", "right")):
+            return (
+                f"{base},zoompan=z='1.05':d={frames}:"
+                f"x='(iw-iw/zoom)*(1-on/{frames})':y='(ih-ih/zoom)/2':s={w}x{h}"
+            )
+        if any(k in text for k in ("zoom out", "pull", "拉远", "pull back", "out")):
+            return (
+                f"{base},zoompan=z='if(lte(zoom,1.0),1.12,max(1.0,zoom-0.0015))':d={frames}:"
+                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}"
+            )
+        # default: slow zoom in (Ken Burns)
+        return (
+            f"{base},zoompan=z='min(zoom+0.0012,1.12)':d={frames}:"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}"
+        )
+
+    def image_to_clip(
+        self,
+        image_path: Path,
+        output_path: Path,
+        duration_sec: float,
+        motion_hint: str = "",
+        camera_movement: str = "",
+        fps: int = 24,
+    ) -> None:
+        """单张图片 → 固定时长 MP4（Ken Burns 动效）。"""
+        self.ensure_available()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        w, h = self._output_size_for_aspect(settings.image_aspect_ratio)
+        frames = max(int(duration_sec * fps), 1)
+        vf = self._motion_to_zoompan(motion_hint, camera_movement, frames, w, h)
+        logger.info(
+            "Image to clip: %s -> %s duration=%.1fs %dx%d motion=%s",
+            image_path, output_path, duration_sec, w, h, motion_hint or camera_movement or "zoom-in",
+        )
+        cmd = [
+            self.ffmpeg, "-y",
+            "-loop", "1",
+            "-i", str(image_path),
+            "-t", str(duration_sec),
+            "-vf", vf,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-r", str(fps),
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+        self._run(cmd)
+
     def get_duration_ms(self, video_path: Path) -> int:
         self.ensure_available()
         cmd = [

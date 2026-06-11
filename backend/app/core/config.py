@@ -33,6 +33,27 @@ class Settings(BaseSettings):
     video_concurrency: int = 3
     minimax_prompt_optimizer: bool = False
 
+    # image | video — image=文生图+FFmpeg，video=海螺视频（付费开启）
+    generation_mode: str = "image"
+    minimax_image_model: str = "image-01"
+    image_aspect_ratio: str = "16:9"
+    image_concurrency: int = 5
+
+    # Multi-provider defaults
+    default_llm_provider: str = "minimax_llm"
+    default_tts_provider: str = "minimax_tts"
+    default_generation_mode: str = "image"
+    enabled_llm_providers: str = "minimax_llm"
+    enabled_tts_providers: str = "minimax_tts"
+    enabled_image_providers: str = "minimax_image"
+    enabled_video_providers: str = "minimax_hailuo"
+    prompt_hot_reload: bool = False
+    prompt_dir: str = ""
+
+    @property
+    def is_image_mode(self) -> bool:
+        return self.generation_mode.strip().lower() != "video"
+
     @property
     def effective_total_duration_sec(self) -> int:
         """成片时长（含段间转场重叠）。"""

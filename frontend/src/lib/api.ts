@@ -2,8 +2,44 @@ export interface VideoConfig {
   segment_count: number;
   segment_duration_sec: number;
   total_duration_sec: number;
+  segment_transition_sec?: number;
+  generation_mode: string;
   video_resolution: string;
   video_concurrency: number;
+  image_aspect_ratio?: string;
+}
+
+export interface ProviderCapabilities {
+  max_duration_sec: number;
+  allowed_durations?: number[];
+  supported_resolutions?: string[];
+  supported_aspect_ratios?: string[];
+  supports_first_frame?: boolean;
+  supports_last_frame?: boolean;
+  hard_cut_between_segments?: boolean;
+  default_concurrency?: number;
+  estimated_cost_hint?: string | null;
+}
+
+export interface ProviderOption {
+  id: string;
+  label: string;
+  enabled: boolean;
+  disabled_reason?: string | null;
+  capabilities?: ProviderCapabilities;
+}
+
+export interface ProvidersConfig {
+  defaults: {
+    generation_mode: string;
+    llm_provider: string;
+    tts_provider: string;
+    segment_provider: string;
+  };
+  generation_modes: { id: string; label: string; description: string }[];
+  llm_providers: ProviderOption[];
+  tts_providers: ProviderOption[];
+  segment_providers: Record<string, ProviderOption[]>;
 }
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -17,6 +53,7 @@ export interface TaskSegment {
   visual_description?: string;
   camera_movement?: string;
   video_url?: string;
+  image_url?: string;
   error_message?: string;
 }
 
@@ -68,6 +105,12 @@ export async function getVideoConfig(): Promise<VideoConfig> {
   return res.json();
 }
 
+export async function getProvidersConfig(): Promise<ProvidersConfig> {
+  const res = await fetch(`${API_BASE}/api/v1/config/providers`, { cache: "no-store" });
+  if (!res.ok) throw new Error("获取 Provider 配置失败");
+  return res.json();
+}
+
 export function resolveMediaUrl(url: string | undefined): string {
   if (!url) return "";
   const idx = url.indexOf("/media/");
@@ -89,6 +132,10 @@ export async function createTask(data: {
   style?: string;
   audience?: string;
   script_direction?: string;
+  generation_mode?: "image" | "video";
+  llm_provider?: string;
+  tts_provider?: string;
+  segment_provider?: string;
 }): Promise<Task> {
   const res = await fetch(`${API_BASE}/api/v1/tasks`, {
     method: "POST",
@@ -97,7 +144,8 @@ export async function createTask(data: {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "创建任务失败");
+    const detail = err.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.message || "创建任务失败");
   }
   return res.json();
 }

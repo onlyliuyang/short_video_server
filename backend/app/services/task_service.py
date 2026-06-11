@@ -6,17 +6,27 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models import FinalOutput, StoryboardSegment, VideoTask
+from app.providers.task_config import resolve_task_providers
+from app.providers.validation import TaskProviderValidationError, validate_task_providers
 from app.schemas.task import CreateTaskRequest, FinalOutputResponse, SegmentResponse, TaskResponse
 from app.services.storage_service import storage_service
 from app.workers.tasks import run_pipeline
 
 
 def build_task_response(task: VideoTask) -> TaskResponse:
+    resolved = resolve_task_providers(task.input_config, task.segment_duration_sec)
     segments = []
     for seg in sorted(task.segments, key=lambda s: s.segment_index):
         video_url = None
+        image_url = None
         if seg.video_path:
             video_url = storage_service.to_public_url(storage_service.base_path / seg.video_path)
+        if seg.last_frame_path and str(seg.last_frame_path).lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            image_url = storage_service.to_public_url(storage_service.base_path / seg.last_frame_path)
+        elif seg.segment_index and resolved.is_image_mode:
+            img_path = storage_service.segment_image_path(task.id, seg.segment_index)
+            if img_path.exists():
+                image_url = storage_service.to_public_url(img_path)
         segments.append(SegmentResponse(
             id=seg.id,
             segment_index=seg.segment_index,
@@ -26,6 +36,7 @@ def build_task_response(task: VideoTask) -> TaskResponse:
             visual_description=seg.visual_description,
             camera_movement=seg.camera_movement,
             video_url=video_url,
+            image_url=image_url,
             error_message=seg.error_message,
         ))
 
@@ -56,6 +67,19 @@ def build_task_response(task: VideoTask) -> TaskResponse:
 
 
 async def create_task(db: AsyncSession, req: CreateTaskRequest) -> VideoTask:
+    try:
+        provider_fields = validate_task_providers(
+            generation_mode=req.generation_mode,
+            llm_provider=req.llm_provider,
+            tts_provider=req.tts_provider,
+            segment_provider=req.segment_provider,
+            segment_duration_sec=req.segment_duration_sec,
+        )
+    except TaskProviderValidationError as e:
+        raise ValueError(e.detail.message) from e
+
+    segment_duration = provider_fields["segment_duration_sec"]
+
     input_config = {
         "prompt": req.prompt,
         "theme": req.theme,
@@ -64,13 +88,14 @@ async def create_task(db: AsyncSession, req: CreateTaskRequest) -> VideoTask:
         "script_direction": req.script_direction,
         "bgm_enabled": req.bgm_enabled,
         "segment_count": settings.segment_count,
-        "segment_duration_sec": settings.segment_duration_sec,
+        "segment_duration_sec": segment_duration,
+        **provider_fields,
     }
     task = VideoTask(
         session_id=req.session_id,
         input_config=input_config,
         total_segments=settings.segment_count,
-        segment_duration_sec=settings.segment_duration_sec,
+        segment_duration_sec=segment_duration,
         progress_message="已提交任务",
     )
     db.add(task)
